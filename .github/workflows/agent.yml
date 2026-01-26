@@ -1,12 +1,14 @@
-name: CI/CD Fix Agent
+name: CI Smart Agent
 
 on:
   workflow_run:
-    workflows: ["Run Node.js script on a schedule"]
-    types: [completed]
+    workflows: ["Django CI Pipeline"]   # 👈 name of your main CI workflow
+    types:
+      - completed
 
 jobs:
-  agent:
+  analyze-failure:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -16,12 +18,26 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
-      - name: Install dependencies
-        run: pip install groq pyyaml
+      - name: Install agent dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install groq
 
-      - name: Run CI/CD Fix Agent
+      - name: Collect CI logs
+        id: logs
+        run: |
+          echo "CI_LOGS<<EOF" >> $GITHUB_ENV
+          echo "Workflow: ${{ github.event.workflow_run.name }}" >> $GITHUB_ENV
+          echo "Conclusion: ${{ github.event.workflow_run.conclusion }}" >> $GITHUB_ENV
+          echo "Run ID: ${{ github.event.workflow_run.id }}" >> $GITHUB_ENV
+          echo "URL: ${{ github.event.workflow_run.html_url }}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Run CI Smart Agent
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-        run: python .github/agent/cicd_fix_agent.py
+          CI_LOGS: ${{ env.CI_LOGS }}
+        run: |
+          python agent/agent.py
