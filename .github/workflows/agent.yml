@@ -1,18 +1,16 @@
-name: CI Smart Agent
+name: CI Smart Agent Bot
 
 on:
-  workflow_run:
-    workflows: ["Django CI Pipeline"]   # 👈 name of your main CI workflow
-    types:
-      - completed
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:   # 👈 manual trigger (very important)
 
 jobs:
-  analyze-failure:
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+  run-agent:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout agent repo
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -20,19 +18,17 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install agent dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install groq
 
-      - name: Collect CI logs
-        id: logs
+      - name: Inject sample CI failure logs
         run: |
           echo "CI_LOGS<<EOF" >> $GITHUB_ENV
-          echo "Workflow: ${{ github.event.workflow_run.name }}" >> $GITHUB_ENV
-          echo "Conclusion: ${{ github.event.workflow_run.conclusion }}" >> $GITHUB_ENV
-          echo "Run ID: ${{ github.event.workflow_run.id }}" >> $GITHUB_ENV
-          echo "URL: ${{ github.event.workflow_run.html_url }}" >> $GITHUB_ENV
+          echo "ERROR: ModuleNotFoundError: No module named 'django'" >> $GITHUB_ENV
+          echo "File: manage.py, line 10" >> $GITHUB_ENV
+          echo "Hint: Did you forget to install requirements?" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
       - name: Run CI Smart Agent
