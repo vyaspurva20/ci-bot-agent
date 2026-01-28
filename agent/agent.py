@@ -1,87 +1,141 @@
 import os
+import json
 import subprocess
 from pathlib import Path
 
 from github import Github
+from groq import Groq
 
 # ---------------- CONFIG ----------------
-TARGET_REPO_NAME = "vyaspurva20/event-management-api"
-TARGET_DIR = "target-repo"
+REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
+GITHUB_TOKEN = os.environ.get("AGENT_GITHUB_TOKEN")
+LLM_API_KEY = os.environ.get("LLM_API_KEY")
+CI_LOGS = os.environ.get("CI_LOGS", "")
 
-# ---------------- UTILS ----------------
-def run(cmd, cwd=None, check=True):
-    print(f"👉 Running: {' '.join(cmd)}")
-    return subprocess.run(cmd, cwd=cwd, check=check)
+client = Groq(api_key=LLM_API_KEY)
 
+# ---------------- HELPERS ----------------
+def run(cmd):
+    return subprocess.run(cmd, shell=True, text=True, capture_output=True)
 
-# ---------------- STEP 1: READ CI LOGS ----------------
-logs = os.environ.get("CI_LOGS", "")
-if not logs:
-    print("⚠️ No CI_LOGS found. Exiting.")
-    exit(0)
+def git_commit_push(message):
+    run("git config user.name 'ci-bot-agent'")
+    run("git config user.email 'ci-bot-agent@github.com'")
+    run("git add .")
+    run(f"git commit -m \"{message}\" || echo 'No changes to commit'")
+    run("git push")
 
-print("📥 CI logs received")
+def comment_on_pr(comment):
+    if not os.environ.get("GITHUB_EVENT_PATH"):
+        return
 
-# ---------------- STEP 2: DETECT ERROR ----------------
-fixes_applied = []
-explanation = []
+    with open(os.environ["GITHUB_EVENT_PATH"]) as f:
+        event = json.load(f)
 
-if "No module named 'oas'" in logs:
-    fixes_applied.append("REMOVE_INVALID_OAS_IMPORT")
-    explanation.append(
-        "Removed invalid import `oas` from `manage.py` because the module does not exist."
+    pr = event.get("pull_request")
+    if not pr:
+        return
+
+    gh = Github(GITHUB_TOKEN)
+    repo = gh.get_repo(REPO_NAME)
+    repo.get_issue(pr["number"]).create_comment(comment)
+
+# ---------------- LLM ----------------
+def ask_llm_for_fix(logs):
+    prompt = f"""
+You are a senior CI/CD auto-fix agent.
+
+Analyze the CI failure logs below and respond ONLY in valid JSON.
+
+Rules:
+- No explanations outside JSON
+- JSON must contain an array called "fixes"
+- Each fix must specify:
+  - file (relative path)
+  - action (remove_line | add_line | replace_line | add_dependency)
+  - match (text to find, optional)
+  - value (text to add/replace)
+  - reason
+
+CI LOGS:
+{logs}
+
+Example response:
+{{
+  "fixes": [
+    {{
+      "file": "manage.py",
+      "action": "remove_line",
+      "match": "import oas",
+      "value": "",
+      "reason": "Module does not exist"
+    }}
+  ]
+}}
+"""
+
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
     )
 
-if not fixes_applied:
-    print("🤷 No known fix patterns matched. Exiting safely.")
-    exit(0)
+    return json.loads(response.choices[0].message.content)
 
-# ---------------- STEP 3: APPLY FIXES ----------------
-manage_py_path = Path(TARGET_DIR) / "manage.py"
+# ---------------- APPLY FIXES ----------------
+def apply_fix(fix):
+    file_path = Path(fix["file"])
 
-if "REMOVE_INVALID_OAS_IMPORT" in fixes_applied:
-    if manage_py_path.exists():
-        code = manage_py_path.read_text()
+    if fix["action"] == "add_dependency":
+        req = Path("requirements.txt")
+        req.touch(exist_ok=True)
+        req.write_text(req.read_text() + f"\n{fix['value']}\n")
+        return
 
-        if "import oas" in code:
-            code = code.replace("import oas\n", "")
-            manage_py_path.write_text(code)
-            print("✅ Fixed manage.py (removed `import oas`)")
-        else:
-            print("ℹ️ manage.py did not contain `import oas`")
-    else:
-        print("❌ manage.py not found")
+    if not file_path.exists():
+        return
 
-# ---------------- STEP 4: COMMIT & PUSH ----------------
-try:
-    run(["git", "config", "user.name", "ci-bot-agent"], cwd=TARGET_DIR)
-    run(["git", "config", "user.email", "ci-bot-agent@github.com"], cwd=TARGET_DIR)
+    lines = file_path.read_text().splitlines()
 
-    run(["git", "add", "."], cwd=TARGET_DIR)
-    run(
-        ["git", "commit", "-m", "🤖 CI Bot: auto-fix missing module error"],
-        cwd=TARGET_DIR,
+    if fix["action"] == "remove_line":
+        lines = [l for l in lines if fix["match"] not in l]
+
+    elif fix["action"] == "replace_line":
+        lines = [fix["value"] if fix["match"] in l else l for l in lines]
+
+    elif fix["action"] == "add_line":
+        lines.append(fix["value"])
+
+    file_path.write_text("\n".join(lines) + "\n")
+
+# ---------------- MAIN ----------------
+def main():
+    if not CI_LOGS.strip():
+        print("No CI logs provided — exiting")
+        return
+
+    print("🧠 Analyzing CI logs with LLM...")
+    plan = ask_llm_for_fix(CI_LOGS)
+
+    fixes = plan.get("fixes", [])
+    if not fixes:
+        print("No fixes suggested")
+        return
+
+    explanations = []
+
+    for fix in fixes:
+        apply_fix(fix)
+        explanations.append(f"- `{fix['file']}` → {fix['reason']}")
+
+    git_commit_push("🤖 CI Bot: auto-fix CI failure")
+
+    comment_on_pr(
+        "🤖 **CI Bot applied fixes automatically:**\n\n" +
+        "\n".join(explanations)
     )
-    run(["git", "push"], cwd=TARGET_DIR)
 
-    print("🚀 Changes committed and pushed")
-except subprocess.CalledProcessError as e:
-    print("⚠️ Git commit/push skipped:", e)
+    print("✅ Fixes applied successfully")
 
-# ---------------- STEP 5: COMMENT ON PR ----------------
-pr_number = os.environ.get("PR_NUMBER")
-
-if pr_number:
-    print(f"💬 Commenting on PR #{pr_number}")
-    gh = Github(os.environ["AGENT_GITHUB_TOKEN"])
-    repo = gh.get_repo(TARGET_REPO_NAME)
-    pr = repo.get_pull(int(pr_number))
-
-    pr.create_issue_comment(
-        "🤖 **CI Bot Auto-Fix Applied**\n\n"
-        + "\n".join(f"- {line}" for line in explanation)
-    )
-else:
-    print("ℹ️ No PR_NUMBER found, skipping PR comment")
-
-print("✅ CI Smart Agent finished successfully")
+if __name__ == "__main__":
+    main()
