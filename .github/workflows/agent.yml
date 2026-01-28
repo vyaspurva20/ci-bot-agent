@@ -5,6 +5,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch:   # 👈 manual trigger (very important)
 
+  repository_dispatch:
+    types: [fix_project_repo]
+
 jobs:
   run-agent:
     runs-on: ubuntu-latest
