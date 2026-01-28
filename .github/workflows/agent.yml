@@ -4,6 +4,10 @@ on:
   repository_dispatch:
     types: [fix_project_repo]
 
+permissions:
+  contents: write   # 👈 REQUIRED to push fixes
+  actions: read
+
 jobs:
   run-agent:
     runs-on: ubuntu-latest
@@ -22,18 +26,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ✅ DEBUG: confirm logs arrived
+      # 🔍 DEBUG: confirm payload arrived correctly
       - name: Debug incoming payload
         run: |
-          echo "==== client_payload.logs ===="
+          echo "==== TARGET_REPO ===="
+          echo "${{ github.event.client_payload.repo }}"
+          echo "==== CI_LOGS ===="
           echo "${{ github.event.client_payload.logs }}"
-          echo "============================="
+          echo "===================="
 
-      # ✅ RUN AGENT (single source of truth)
+      # 🤖 Run the agent
       - name: Run CI Smart Agent
         env:
           AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+
+          # 🔑 THESE TWO ARE CRITICAL
+          TARGET_REPO: ${{ github.event.client_payload.repo }}
           CI_LOGS: ${{ github.event.client_payload.logs }}
+
         run: |
           python agent/agent.py
