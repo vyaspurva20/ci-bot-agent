@@ -1,14 +1,16 @@
 import os
 import re
 import subprocess
-from typing import Optional
+from typing import Optional, Tuple
 
-# -----------------------------
+# -------------------------------------------------
 # CONFIG
-# -----------------------------
+# -------------------------------------------------
 
 TARGET_REPO = "vyaspurva20/recommender-system"
 TARGET_BRANCH = "main"
+
+WORKDIR = "/tmp/recommender-system"
 
 SAFE_PYPI_PACKAGES = {
     "django",
@@ -23,12 +25,9 @@ SAFE_PYPI_PACKAGES = {
     "pytest",
 }
 
-WORKDIR = "/tmp/recommender-system"
-
-
-# -----------------------------
+# -------------------------------------------------
 # UTILITIES
-# -----------------------------
+# -------------------------------------------------
 
 def run(cmd: str):
     print(f"$ {cmd}")
@@ -54,11 +53,6 @@ def read_ci_logs() -> str:
     return logs
 
 
-def extract_missing_module(logs: str) -> Optional[str]:
-    match = re.search(r"No module named ['\"]([^'\"]+)['\"]", logs)
-    return match.group(1) if match else None
-
-
 def find_python_files():
     for root, _, files in os.walk(WORKDIR):
         if ".git" in root:
@@ -68,9 +62,50 @@ def find_python_files():
                 yield os.path.join(root, f)
 
 
-# -----------------------------
+# -------------------------------------------------
+# ERROR EXTRACTION
+# -------------------------------------------------
+
+def extract_missing_module(logs: str) -> Optional[str]:
+    match = re.search(r"No module named ['\"]([^'\"]+)['\"]", logs)
+    return match.group(1) if match else None
+
+
+def extract_name_error_fix(logs: str) -> Optional[Tuple[str, str]]:
+    """
+    Example:
+    NameError: name 'load_dtaa' is not defined. Did you mean: 'load_data'?
+    """
+    match = re.search(
+        r"NameError: name '([^']+)' is not defined\. Did you mean: '([^']+)'",
+        logs,
+    )
+    if match:
+        return match.group(1), match.group(2)
+    return None
+
+
+# -------------------------------------------------
 # FIX STRATEGIES
-# -----------------------------
+# -------------------------------------------------
+
+def fix_name_error(old_name: str, new_name: str):
+    print(f"🛠 Fixing NameError: {old_name} → {new_name}")
+
+    for file_path in find_python_files():
+        with open(file_path, "r") as f:
+            content = f.read()
+
+        if old_name not in content:
+            continue
+
+        content = content.replace(old_name, new_name)
+
+        with open(file_path, "w") as f:
+            f.write(content)
+
+        print(f"✅ Fixed NameError in {file_path}")
+
 
 def remove_import(module_name: str):
     print(f"🛠 Removing invalid import: {module_name}")
@@ -118,9 +153,9 @@ def add_dependency(module_name: str):
     print("✅ Dependency added")
 
 
-# -----------------------------
+# -------------------------------------------------
 # GIT
-# -----------------------------
+# -------------------------------------------------
 
 def git_commit_and_push(message: str):
     token = os.environ.get("AGENT_GITHUB_TOKEN")
@@ -137,36 +172,46 @@ def git_commit_and_push(message: str):
     run(f"git push origin {TARGET_BRANCH}")
 
 
-# -----------------------------
+# -------------------------------------------------
 # MAIN
-# -----------------------------
+# -------------------------------------------------
 
 def main():
     print("🤖 CI Smart Agent started")
 
     clone_target_repo()
-
     logs = read_ci_logs()
-    missing_module = extract_missing_module(logs)
 
-    if not missing_module:
-        print("✅ No missing module error detected")
+    # 1️⃣ NameError typo fix
+    name_error = extract_name_error_fix(logs)
+    if name_error:
+        old_name, new_name = name_error
+        fix_name_error(old_name, new_name)
+        git_commit_and_push(
+            f"🤖 CI Bot: fix NameError {old_name} → {new_name}"
+        )
+        print("🚀 NameError fixed successfully")
         return
 
-    print(f"🔍 Missing module detected: {missing_module}")
+    # 2️⃣ Missing dependency/import fix
+    missing_module = extract_missing_module(logs)
+    if missing_module:
+        print(f"🔍 Missing module detected: {missing_module}")
 
-    if missing_module in SAFE_PYPI_PACKAGES:
-        add_dependency(missing_module)
-        fix_type = "dependency"
-    else:
-        remove_import(missing_module)
-        fix_type = "code"
+        if missing_module in SAFE_PYPI_PACKAGES:
+            add_dependency(missing_module)
+            fix_type = "dependency"
+        else:
+            remove_import(missing_module)
+            fix_type = "code"
 
-    git_commit_and_push(
-        f"🤖 CI Bot: auto-fix missing {fix_type} ({missing_module})"
-    )
+        git_commit_and_push(
+            f"🤖 CI Bot: auto-fix missing {fix_type} ({missing_module})"
+        )
+        print("🚀 Dependency/import fixed successfully")
+        return
 
-    print("🚀 Fix pushed to project repo successfully")
+    print("ℹ️ No supported fix found in logs")
 
 
 if __name__ == "__main__":
