@@ -1,141 +1,146 @@
 import os
-import json
+import re
 import subprocess
-from pathlib import Path
+from typing import Optional
 
-from github import Github
-from groq import Groq
+# -----------------------------
+# CONFIG
+# -----------------------------
 
-# ---------------- CONFIG ----------------
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
-GITHUB_TOKEN = os.environ.get("AGENT_GITHUB_TOKEN")
-LLM_API_KEY = os.environ.get("LLM_API_KEY")
-CI_LOGS = os.environ.get("CI_LOGS", "")
+SAFE_PYPI_PACKAGES = {
+    "django",
+    "requests",
+    "flask",
+    "fastapi",
+    "numpy",
+    "pandas",
+    "torch",
+    "groq",
+    "PyGithub",
+    "pytest",
+}
 
-client = Groq(api_key=LLM_API_KEY)
+PROJECT_ROOT = os.getenv("GITHUB_WORKSPACE", os.getcwd())
 
-# ---------------- HELPERS ----------------
-def run(cmd):
-    return subprocess.run(cmd, shell=True, text=True, capture_output=True)
 
-def git_commit_push(message):
-    run("git config user.name 'ci-bot-agent'")
-    run("git config user.email 'ci-bot-agent@github.com'")
-    run("git add .")
-    run(f"git commit -m \"{message}\" || echo 'No changes to commit'")
-    run("git push")
+# -----------------------------
+# UTILITIES
+# -----------------------------
 
-def comment_on_pr(comment):
-    if not os.environ.get("GITHUB_EVENT_PATH"):
+def read_ci_logs() -> str:
+    logs = os.environ.get("CI_LOGS")
+    if not logs:
+        raise RuntimeError("CI_LOGS env var not found")
+    return logs
+
+
+def extract_missing_module(logs: str) -> Optional[str]:
+    """
+    Extract module name from:
+    ModuleNotFoundError: No module named 'xyz'
+    """
+    match = re.search(r"No module named ['\"]([^'\"]+)['\"]", logs)
+    return match.group(1) if match else None
+
+
+def find_python_files():
+    for root, _, files in os.walk(PROJECT_ROOT):
+        if ".git" in root:
+            continue
+        for f in files:
+            if f.endswith(".py"):
+                yield os.path.join(root, f)
+
+
+# -----------------------------
+# FIX STRATEGIES
+# -----------------------------
+
+def remove_import(module_name: str):
+    print(f"🛠 Removing invalid import: {module_name}")
+
+    for file_path in find_python_files():
+        with open(file_path, "r") as f:
+            lines = f.readlines()
+
+        new_lines = []
+        changed = False
+
+        for line in lines:
+            if (
+                line.strip() == f"import {module_name}"
+                or line.strip() == f"from {module_name} import"
+                or line.strip().startswith(f"from {module_name} import ")
+            ):
+                changed = True
+                continue
+            new_lines.append(line)
+
+        if changed:
+            with open(file_path, "w") as f:
+                f.writelines(new_lines)
+            print(f"✅ Fixed import in {file_path}")
+
+
+def add_dependency(module_name: str):
+    print(f"📦 Adding dependency to requirements.txt: {module_name}")
+
+    req_path = os.path.join(PROJECT_ROOT, "requirements.txt")
+    if not os.path.exists(req_path):
+        print("⚠️ requirements.txt not found, skipping")
         return
 
-    with open(os.environ["GITHUB_EVENT_PATH"]) as f:
-        event = json.load(f)
+    with open(req_path, "r") as f:
+        content = f.read()
 
-    pr = event.get("pull_request")
-    if not pr:
+    if module_name in content:
+        print("ℹ️ Dependency already exists")
         return
 
-    gh = Github(GITHUB_TOKEN)
-    repo = gh.get_repo(REPO_NAME)
-    repo.get_issue(pr["number"]).create_comment(comment)
+    with open(req_path, "a") as f:
+        f.write(f"\n{module_name}\n")
 
-# ---------------- LLM ----------------
-def ask_llm_for_fix(logs):
-    prompt = f"""
-You are a senior CI/CD auto-fix agent.
+    print("✅ Dependency added")
 
-Analyze the CI failure logs below and respond ONLY in valid JSON.
 
-Rules:
-- No explanations outside JSON
-- JSON must contain an array called "fixes"
-- Each fix must specify:
-  - file (relative path)
-  - action (remove_line | add_line | replace_line | add_dependency)
-  - match (text to find, optional)
-  - value (text to add/replace)
-  - reason
+# -----------------------------
+# GIT
+# -----------------------------
 
-CI LOGS:
-{logs}
+def git_commit(message: str):
+    subprocess.run(["git", "config", "user.name", "ci-bot-agent"], check=False)
+    subprocess.run(["git", "config", "user.email", "ci-bot-agent@github.com"], check=False)
+    subprocess.run(["git", "add", "."], check=False)
+    subprocess.run(["git", "commit", "-m", message], check=False)
+    subprocess.run(["git", "push"], check=False)
 
-Example response:
-{{
-  "fixes": [
-    {{
-      "file": "manage.py",
-      "action": "remove_line",
-      "match": "import oas",
-      "value": "",
-      "reason": "Module does not exist"
-    }}
-  ]
-}}
-"""
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
+# -----------------------------
+# MAIN LOGIC
+# -----------------------------
 
-    return json.loads(response.choices[0].message.content)
-
-# ---------------- APPLY FIXES ----------------
-def apply_fix(fix):
-    file_path = Path(fix["file"])
-
-    if fix["action"] == "add_dependency":
-        req = Path("requirements.txt")
-        req.touch(exist_ok=True)
-        req.write_text(req.read_text() + f"\n{fix['value']}\n")
-        return
-
-    if not file_path.exists():
-        return
-
-    lines = file_path.read_text().splitlines()
-
-    if fix["action"] == "remove_line":
-        lines = [l for l in lines if fix["match"] not in l]
-
-    elif fix["action"] == "replace_line":
-        lines = [fix["value"] if fix["match"] in l else l for l in lines]
-
-    elif fix["action"] == "add_line":
-        lines.append(fix["value"])
-
-    file_path.write_text("\n".join(lines) + "\n")
-
-# ---------------- MAIN ----------------
 def main():
-    if not CI_LOGS.strip():
-        print("No CI logs provided — exiting")
+    print("🤖 CI Smart Agent started")
+
+    logs = read_ci_logs()
+    missing_module = extract_missing_module(logs)
+
+    if not missing_module:
+        print("✅ No missing module error detected")
         return
 
-    print("🧠 Analyzing CI logs with LLM...")
-    plan = ask_llm_for_fix(CI_LOGS)
+    print(f"🔍 Missing module detected: {missing_module}")
 
-    fixes = plan.get("fixes", [])
-    if not fixes:
-        print("No fixes suggested")
-        return
+    if missing_module in SAFE_PYPI_PACKAGES:
+        add_dependency(missing_module)
+        fix_type = "dependency"
+    else:
+        remove_import(missing_module)
+        fix_type = "code"
 
-    explanations = []
+    git_commit(f"🤖 CI Bot: auto-fix missing {fix_type} ({missing_module})")
+    print("🚀 Fix committed successfully")
 
-    for fix in fixes:
-        apply_fix(fix)
-        explanations.append(f"- `{fix['file']}` → {fix['reason']}")
-
-    git_commit_push("🤖 CI Bot: auto-fix CI failure")
-
-    comment_on_pr(
-        "🤖 **CI Bot applied fixes automatically:**\n\n" +
-        "\n".join(explanations)
-    )
-
-    print("✅ Fixes applied successfully")
 
 if __name__ == "__main__":
     main()
