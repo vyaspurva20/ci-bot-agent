@@ -45,6 +45,7 @@ jobs:
       - name: Run CI Smart Agent
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           CI_LOGS: ${{ env.CI_LOGS }}
         run: |
           python agent/agent.py
