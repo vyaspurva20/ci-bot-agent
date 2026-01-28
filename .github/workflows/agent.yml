@@ -46,6 +46,6 @@ jobs:
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
-          CI_LOGS: ${{ env.CI_LOGS }}
+          CI_LOGS: ${{ github.event.client_payload.logs }}
         run: |
           python agent/agent.py
