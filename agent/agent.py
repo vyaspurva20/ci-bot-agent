@@ -7,6 +7,9 @@ from typing import Optional
 # CONFIG
 # -----------------------------
 
+TARGET_REPO = "vyaspurva20/recommender-system"
+TARGET_BRANCH = "main"
+
 SAFE_PYPI_PACKAGES = {
     "django",
     "requests",
@@ -20,12 +23,29 @@ SAFE_PYPI_PACKAGES = {
     "pytest",
 }
 
-PROJECT_ROOT = os.getenv("GITHUB_WORKSPACE", os.getcwd())
+WORKDIR = "/tmp/recommender-system"
 
 
 # -----------------------------
 # UTILITIES
 # -----------------------------
+
+def run(cmd: str):
+    print(f"$ {cmd}")
+    subprocess.run(cmd, shell=True, check=False)
+
+
+def clone_target_repo():
+    token = os.environ.get("AGENT_GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("AGENT_GITHUB_TOKEN not set")
+
+    run(f"rm -rf {WORKDIR}")
+    run(
+        f"git clone https://x-access-token:{token}@github.com/{TARGET_REPO}.git {WORKDIR}"
+    )
+    os.chdir(WORKDIR)
+
 
 def read_ci_logs() -> str:
     logs = os.environ.get("CI_LOGS")
@@ -35,16 +55,12 @@ def read_ci_logs() -> str:
 
 
 def extract_missing_module(logs: str) -> Optional[str]:
-    """
-    Extract module name from:
-    ModuleNotFoundError: No module named 'xyz'
-    """
     match = re.search(r"No module named ['\"]([^'\"]+)['\"]", logs)
     return match.group(1) if match else None
 
 
 def find_python_files():
-    for root, _, files in os.walk(PROJECT_ROOT):
+    for root, _, files in os.walk(WORKDIR):
         if ".git" in root:
             continue
         for f in files:
@@ -69,8 +85,7 @@ def remove_import(module_name: str):
         for line in lines:
             if (
                 line.strip() == f"import {module_name}"
-                or line.strip() == f"from {module_name} import"
-                or line.strip().startswith(f"from {module_name} import ")
+                or line.strip().startswith(f"from {module_name} import")
             ):
                 changed = True
                 continue
@@ -83,11 +98,11 @@ def remove_import(module_name: str):
 
 
 def add_dependency(module_name: str):
-    print(f"📦 Adding dependency to requirements.txt: {module_name}")
+    print(f"📦 Adding dependency: {module_name}")
 
-    req_path = os.path.join(PROJECT_ROOT, "requirements.txt")
+    req_path = os.path.join(WORKDIR, "requirements.txt")
     if not os.path.exists(req_path):
-        print("⚠️ requirements.txt not found, skipping")
+        print("⚠️ requirements.txt not found")
         return
 
     with open(req_path, "r") as f:
@@ -107,20 +122,29 @@ def add_dependency(module_name: str):
 # GIT
 # -----------------------------
 
-def git_commit(message: str):
-    subprocess.run(["git", "config", "user.name", "ci-bot-agent"], check=False)
-    subprocess.run(["git", "config", "user.email", "ci-bot-agent@github.com"], check=False)
-    subprocess.run(["git", "add", "."], check=False)
-    subprocess.run(["git", "commit", "-m", message], check=False)
-    subprocess.run(["git", "push"], check=False)
+def git_commit_and_push(message: str):
+    token = os.environ.get("AGENT_GITHUB_TOKEN")
+
+    run('git config user.name "ci-bot-agent"')
+    run('git config user.email "ci-bot-agent@users.noreply.github.com"')
+
+    run(
+        f"git remote set-url origin https://x-access-token:{token}@github.com/{TARGET_REPO}.git"
+    )
+
+    run("git add .")
+    run(f'git commit -m "{message}" || echo "No changes to commit"')
+    run(f"git push origin {TARGET_BRANCH}")
 
 
 # -----------------------------
-# MAIN LOGIC
+# MAIN
 # -----------------------------
 
 def main():
     print("🤖 CI Smart Agent started")
+
+    clone_target_repo()
 
     logs = read_ci_logs()
     missing_module = extract_missing_module(logs)
@@ -138,8 +162,11 @@ def main():
         remove_import(missing_module)
         fix_type = "code"
 
-    git_commit(f"🤖 CI Bot: auto-fix missing {fix_type} ({missing_module})")
-    print("🚀 Fix committed successfully")
+    git_commit_and_push(
+        f"🤖 CI Bot: auto-fix missing {fix_type} ({missing_module})"
+    )
+
+    print("🚀 Fix pushed to project repo successfully")
 
 
 if __name__ == "__main__":
