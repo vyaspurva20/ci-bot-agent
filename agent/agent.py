@@ -1,122 +1,56 @@
 import os
-import sys
-import traceback
-from groq import Groq
+import subprocess
+from pathlib import Path
+from github import Github
 
-# =====================================================
-# CONFIG
-# =====================================================
+def run(cmd):
+    print(f"$ {cmd}")
+    subprocess.run(cmd, shell=True, check=False)
 
-SUPPORTED_MODELS = [
-    "llama-3.1-8b-instant",
-    "llama-3.1-70b-versatile",
-]
+# ---------------- READ LOGS ----------------
+logs = os.environ.get("CI_LOGS", "")
+print("📥 CI LOGS RECEIVED")
 
-SYSTEM_PROMPT = """
-You are a senior CI/CD Fix Agent.
+# ---------------- SIMPLE FIX RULES ----------------
+fix_applied = False
+explanation = ""
 
-Your job:
-- Analyze CI/CD failure logs
-- Explain the root cause clearly
-- Suggest exact fixes
-- Mention filenames and corrected snippets when possible
+# Example fix: remove invalid import "oas"
+if "No module named 'oas'" in logs:
+    manage_py = Path("manage.py")
+    if manage_py.exists():
+        content = manage_py.read_text()
+        if "import oas" in content:
+            manage_py.write_text(content.replace("import oas\n", ""))
+            fix_applied = True
+            explanation = "Removed invalid import `import oas` from manage.py"
 
-Do NOT hallucinate.
-If logs are insufficient, say so clearly.
-"""
+# ---------------- STOP IF NOTHING TO FIX ----------------
+if not fix_applied:
+    print("ℹ️ No auto-fix applied")
+    exit(0)
 
-# =====================================================
-# HELPERS
-# =====================================================
+print("✅ Fix applied")
 
-def log(msg):
-    print(msg, flush=True)
+# ---------------- STEP 4: AUTO COMMIT ----------------
+run("git config user.name 'ci-bot-agent'")
+run("git config user.email 'ci-bot-agent@github.com'")
+run("git add .")
+run("git commit -m '🤖 CI Bot: auto-fix failing CI'")
+run("git push")
 
-def get_api_key():
-    api_key = os.getenv("LLM_API_KEY")
-    if not api_key:
-        raise RuntimeError("LLM_API_KEY is not set in environment")
-    return api_key
+# ---------------- STEP 5: COMMENT ON PR ----------------
+repo_name = os.environ.get("GITHUB_REPOSITORY")
+token = os.environ.get("AGENT_GITHUB_TOKEN")
 
-# =====================================================
-# LLM CALL WITH FALLBACK
-# =====================================================
+if repo_name and token:
+    g = Github(token)
+    repo = g.get_repo(repo_name)
 
-def call_llm(prompt: str) -> str:
-    client = Groq(api_key=get_api_key())
-    last_error = None
+    prs = repo.get_pulls(state="open")
+    for pr in prs:
+        pr.create_issue_comment(
+            f"🤖 **CI Bot Auto-Fix Applied**\n\n{explanation}"
+        )
 
-    for model in SUPPORTED_MODELS:
-        try:
-            log(f"🔁 Trying model: {model}")
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0,
-            )
-            return response.choices[0].message.content
-
-        except Exception as e:
-            log(f"❌ Model failed ({model}): {e}")
-            last_error = e
-
-    raise RuntimeError(f"All LLM models failed. Last error: {last_error}")
-
-# =====================================================
-# FAILURE ANALYSIS
-# =====================================================
-
-def read_ci_logs():
-    """
-    For now, we rely on logs passed via environment.
-    Later you can extend this to read job logs automatically.
-    """
-    return os.getenv("CI_LOGS", "No CI logs provided.")
-
-def analyze_failure(logs: str) -> str:
-    prompt = f"""
-The following CI/CD job failed.
-
-Logs:
-----------------
-{logs}
-----------------
-
-Tasks:
-1. Identify the root cause
-2. Explain why it failed
-3. Provide the exact fix
-4. Mention file names and corrected snippets
-"""
-    return call_llm(prompt)
-
-# =====================================================
-# MAIN
-# =====================================================
-
-def main():
-    try:
-        log("🔍 Detecting CI/CD system...")
-        log("✅ Detected: github_actions")
-
-        log("📥 Reading CI logs...")
-        logs = read_ci_logs()
-
-        log("🧠 Analyzing failure...")
-        result = analyze_failure(logs)
-
-        log("\n================ FIX SUGGESTION ================\n")
-        print(result)
-        log("\n================================================\n")
-
-    except Exception as e:
-        log("🚨 LLM failure (not retryable)")
-        log(str(e))
-        traceback.print_exc()
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+print("💬 PR comment added")
