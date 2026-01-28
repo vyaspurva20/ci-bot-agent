@@ -4,13 +4,16 @@ import subprocess
 from typing import Optional, Tuple
 
 # -------------------------------------------------
-# CONFIG
+# CONFIG (DYNAMIC – DO NOT HARDCODE)
 # -------------------------------------------------
 
-TARGET_REPO = "vyaspurva20/recommender-system"
+TARGET_REPO = os.environ.get("TARGET_REPO")
 TARGET_BRANCH = "main"
 
-WORKDIR = "/tmp/recommender-system"
+if not TARGET_REPO:
+    raise RuntimeError("TARGET_REPO env var not set")
+
+WORKDIR = f"/tmp/{TARGET_REPO.split('/')[-1]}"
 
 SAFE_PYPI_PACKAGES = {
     "django",
@@ -61,7 +64,6 @@ def find_python_files():
             if f.endswith(".py"):
                 yield os.path.join(root, f)
 
-
 # -------------------------------------------------
 # ERROR EXTRACTION
 # -------------------------------------------------
@@ -74,7 +76,7 @@ def extract_missing_module(logs: str) -> Optional[str]:
 def extract_name_error_fix(logs: str) -> Optional[Tuple[str, str]]:
     """
     Example:
-    NameError: name 'load_dtaa' is not defined. Did you mean: 'load_data'?
+    NameError: name 'load_dta' is not defined. Did you mean: 'load_data'?
     """
     match = re.search(
         r"NameError: name '([^']+)' is not defined\. Did you mean: '([^']+)'",
@@ -83,7 +85,6 @@ def extract_name_error_fix(logs: str) -> Optional[Tuple[str, str]]:
     if match:
         return match.group(1), match.group(2)
     return None
-
 
 # -------------------------------------------------
 # FIX STRATEGIES
@@ -152,7 +153,6 @@ def add_dependency(module_name: str):
 
     print("✅ Dependency added")
 
-
 # -------------------------------------------------
 # GIT
 # -------------------------------------------------
@@ -167,10 +167,15 @@ def git_commit_and_push(message: str):
         f"git remote set-url origin https://x-access-token:{token}@github.com/{TARGET_REPO}.git"
     )
 
-    run("git add .")
-    run(f'git commit -m "{message}" || echo "No changes to commit"')
-    run(f"git push origin {TARGET_BRANCH}")
+    run("git status --porcelain > /tmp/git_status.txt")
 
+    if os.path.getsize("/tmp/git_status.txt") == 0:
+        print("ℹ️ No changes detected, skipping commit")
+        return
+
+    run("git add .")
+    run(f'git commit -m "{message}"')
+    run(f"git push origin {TARGET_BRANCH}")
 
 # -------------------------------------------------
 # MAIN
@@ -182,7 +187,7 @@ def main():
     clone_target_repo()
     logs = read_ci_logs()
 
-    # 1️⃣ NameError typo fix
+    # 1️⃣ Fix NameError typos
     name_error = extract_name_error_fix(logs)
     if name_error:
         old_name, new_name = name_error
@@ -193,7 +198,7 @@ def main():
         print("🚀 NameError fixed successfully")
         return
 
-    # 2️⃣ Missing dependency/import fix
+    # 2️⃣ Fix missing dependency/import
     missing_module = extract_missing_module(logs)
     if missing_module:
         print(f"🔍 Missing module detected: {missing_module}")
@@ -211,8 +216,7 @@ def main():
         print("🚀 Dependency/import fixed successfully")
         return
 
-    print("ℹ️ No supported fix found in logs")
-
+    print("ℹ️ No supported fix found in CI logs")
 
 if __name__ == "__main__":
     main()
