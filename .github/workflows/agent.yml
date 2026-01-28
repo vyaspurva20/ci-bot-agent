@@ -1,10 +1,6 @@
 name: CI Smart Agent Bot
 
 on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:   # 👈 manual trigger (very important)
-
   repository_dispatch:
     types: [fix_project_repo]
 
@@ -26,22 +22,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-
-
-      - name: Inject sample CI failure logs
+      # ✅ DEBUG: confirm logs arrived
+      - name: Debug incoming payload
         run: |
-          echo "CI_LOGS<<EOF" >> $GITHUB_ENV
-          echo "ERROR: ModuleNotFoundError: No module named 'django'" >> $GITHUB_ENV
-          echo "File: manage.py, line 10" >> $GITHUB_ENV
-          echo "Hint: Did you forget to install requirements?" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-      
-      - name: Clone target repo
-        env:
-          GH_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
-        run: |
-          git clone https://$GH_TOKEN@github.com/vyaspurva20/event-management-api.git target-repo
+          echo "==== client_payload.logs ===="
+          echo "${{ github.event.client_payload.logs }}"
+          echo "============================="
 
+      # ✅ RUN AGENT (single source of truth)
       - name: Run CI Smart Agent
         env:
           AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
@@ -49,5 +37,3 @@ jobs:
           CI_LOGS: ${{ github.event.client_payload.logs }}
         run: |
           python agent/agent.py
-
-
