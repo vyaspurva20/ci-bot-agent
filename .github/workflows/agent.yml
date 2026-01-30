@@ -24,17 +24,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout ci-bot-agent source
+      - name: Checkout ci-bot-agent
         uses: actions/checkout@v4
         with:
           repository: vyaspurva20/ci-bot-agent
           ref: v1
-          path: ci-bot-agent
 
-      - name: Verify files
+      - name: Debug workspace
         run: |
+          pwd
           ls -la
-          ls -la ci-bot-agent
+          ls -la agent
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,15 +42,17 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
+        working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -r ci-bot-agent/requirements.txt
+          pip install -r requirements.txt
 
       - name: Run CI Smart Agent
+        working-directory: .
         env:
           TARGET_REPO: ${{ inputs.repo }}
           CI_LOGS: ${{ inputs.logs }}
           AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
-          python ci-bot-agent/agent/agent.py
+          python agent/agent.py
