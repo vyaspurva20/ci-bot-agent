@@ -28,6 +28,16 @@ SAFE_PYPI_PACKAGES = {
     "pytest",
 }
 
+# Known CI command fixes (OPTION 1 LOGIC)
+KNOWN_CI_COMMAND_FIXES = {
+    "pytest": "pip install pytest",
+    "flake8": "pip install flake8",
+    "black": "pip install black",
+    "npm": "sudo apt-get install -y npm",
+    "node": "sudo apt-get install -y nodejs",
+    "yarn": "npm install -g yarn",
+}
+
 # -------------------------------------------------
 # UTILITIES
 # -------------------------------------------------
@@ -88,15 +98,8 @@ def extract_name_error_fix(logs: str) -> Optional[Tuple[str, str]]:
 
 
 def extract_ci_command_not_found(logs: str) -> Optional[str]:
-    """
-    Example:
-    Run some_command_that_does_not_exist
-    /bin/sh: some_command_that_does_not_exist: command not found
-    """
-    match = re.search(r"Run ([^\n]+)\n.*command not found", logs, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return None
+    match = re.search(r"(\w+): command not found", logs)
+    return match.group(1) if match else None
 
 # -------------------------------------------------
 # FIX STRATEGIES
@@ -150,7 +153,7 @@ def add_dependency(module_name: str):
 
     req_path = os.path.join(WORKDIR, "requirements.txt")
     if not os.path.exists(req_path):
-        print("⚠️ requirements.txt not found, skipping dependency fix")
+        print("⚠️ requirements.txt not found, skipping")
         return
 
     with open(req_path, "r") as f:
@@ -165,18 +168,22 @@ def add_dependency(module_name: str):
 
     print("✅ Dependency added")
 
-# -------------------------------------------------
-# CI WORKFLOW SUGGESTION (SAFE)
-# -------------------------------------------------
 
-def suggest_ci_fix(command: str):
-    print("⚠️ CI workflow command not found")
-    print(f"❌ Failing command: {command}")
-    print("💡 Suggested actions:")
-    print("- Verify the command exists on ubuntu-latest")
-    print("- Install the required tool before using it")
-    print("- Correct command spelling or path")
-    print("- Use an official GitHub Action if available")
+def handle_ci_command_not_found(command: str):
+    base_cmd = command.strip()
+
+    print(f"⚠️ CI command not found: {base_cmd}")
+
+    if base_cmd in KNOWN_CI_COMMAND_FIXES:
+        fix = KNOWN_CI_COMMAND_FIXES[base_cmd]
+        print(f"🛠 Known fix detected:")
+        print(f"👉 Add this BEFORE the command in your workflow:")
+        print(f"    {fix}")
+    else:
+        print("❌ Unknown command")
+        print("💡 Manual action required:")
+        print(f"- Install `{base_cmd}` in CI")
+        print("- Or remove / replace the command")
 
 # -------------------------------------------------
 # GIT
@@ -223,7 +230,7 @@ def main():
         print("🚀 NameError fixed successfully")
         return
 
-    # 2️⃣ Fix missing Python dependency / import
+    # 2️⃣ Fix missing Python dependency/import
     missing_module = extract_missing_module(logs)
     if missing_module:
         print(f"🔍 Missing module detected: {missing_module}")
@@ -233,22 +240,21 @@ def main():
             fix_type = "dependency"
         else:
             remove_import(missing_module)
-            fix_type = "code"
+            fix_type = "import"
 
         git_commit_and_push(
             f"🤖 CI Bot: auto-fix missing {fix_type} ({missing_module})"
         )
-        print("🚀 Dependency/import fixed successfully")
+        print("🚀 Python module issue fixed")
         return
 
-    # 3️⃣ CI command not found (workflow-level, safe suggestion only)
+    # 3️⃣ Handle CI command not found (OPTION 1 LOGIC)
     ci_cmd = extract_ci_command_not_found(logs)
     if ci_cmd:
-        suggest_ci_fix(ci_cmd)
-        print("ℹ️ CI workflow issue detected — no auto-fix applied")
+        handle_ci_command_not_found(ci_cmd)
         return
 
-    print("ℹ️ No supported fix found in CI logs")
+    print("ℹ️ CI logs parsed — no safe automatic fix applicable")
 
 if __name__ == "__main__":
     main()
