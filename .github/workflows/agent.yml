@@ -15,9 +15,6 @@ on:
       LLM_API_KEY:
         required: false
 
-  repository_dispatch:
-    types: [fix_project_repo]
-
 permissions:
   contents: write
   actions: read
@@ -27,8 +24,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout agent repo
+      - name: Checkout agent repository
         uses: actions/checkout@v4
+        with:
+          repository: vyaspurva20/ci-bot-agent
+          ref: v1
+
+      - name: Verify files
+        run: |
+          pwd
+          ls -la
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,24 +42,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          ls -la
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-
-      # 🔍 Resolve inputs for BOTH trigger types
-      - name: Resolve inputs
-        run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "TARGET_REPO=${{ github.event.client_payload.repo }}" >> $GITHUB_ENV
-            echo "CI_LOGS=${{ github.event.client_payload.logs }}" >> $GITHUB_ENV
-          else
-            echo "TARGET_REPO=${{ inputs.repo }}" >> $GITHUB_ENV
-            echo "CI_LOGS=${{ inputs.logs }}" >> $GITHUB_ENV
-          fi
-
       - name: Run CI Smart Agent
         env:
+          TARGET_REPO: ${{ inputs.repo }}
+          CI_LOGS: ${{ inputs.logs }}
           AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
