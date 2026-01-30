@@ -24,29 +24,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout AGENT repo into ./agent-repo
       - name: Checkout agent repo
         uses: actions/checkout@v4
+        with:
+          repository: vyaspurva20/ci-bot-agent
+          path: agent-repo
 
+      # 2️⃣ Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 🔍 DEBUG — proves where we are and what files exist
-      - name: Debug workspace
+      # 3️⃣ DEBUG (prove file exists)
+      - name: Debug agent workspace
         run: |
-          echo "PWD:"
           pwd
-          echo "Workspace files:"
-          ls -la $GITHUB_WORKSPACE
+          ls -la
+          ls -la agent-repo
+          ls -la agent-repo/requirements.txt
 
-      # ✅ FIXED: absolute path to requirements.txt
+      # 4️⃣ Install dependencies FROM AGENT REPO
       - name: Install dependencies
         run: |
+          cd agent-repo
           python -m pip install --upgrade pip
-          pip install -r $GITHUB_WORKSPACE/requirements.txt
+          pip install -r requirements.txt
 
-      # 🤖 RUN AGENT
+      # 5️⃣ Run agent
       - name: Run CI Smart Agent
         env:
           TARGET_REPO: ${{ inputs.repo }}
@@ -54,4 +60,5 @@ jobs:
           AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
+          cd agent-repo
           python agent/agent.py
