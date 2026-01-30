@@ -1,11 +1,22 @@
 name: CI Smart Agent Bot
 
 on:
-  repository_dispatch:
-    types: [fix_project_repo]
+  workflow_call:
+    inputs:
+      logs:
+        required: true
+        type: string
+      repo:
+        required: true
+        type: string
+    secrets:
+      AGENT_GITHUB_TOKEN:
+        required: true
+      LLM_API_KEY:
+        required: false
 
 permissions:
-  contents: write   # 👈 REQUIRED to push fixes
+  contents: write
   actions: read
 
 jobs:
@@ -26,24 +37,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 🔍 DEBUG: confirm payload arrived correctly
-      - name: Debug incoming payload
-        run: |
-          echo "==== TARGET_REPO ===="
-          echo "${{ github.event.client_payload.repo }}"
-          echo "==== CI_LOGS ===="
-          echo "${{ github.event.client_payload.logs }}"
-          echo "===================="
-
-      # 🤖 Run the agent
       - name: Run CI Smart Agent
         env:
+          TARGET_REPO: ${{ inputs.repo }}
+          CI_LOGS: ${{ inputs.logs }}
           AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-
-          # 🔑 THESE TWO ARE CRITICAL
-          TARGET_REPO: ${{ github.event.client_payload.repo }}
-          CI_LOGS: ${{ github.event.client_payload.logs }}
-
         run: |
           python agent/agent.py
