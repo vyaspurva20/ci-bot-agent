@@ -29,12 +29,13 @@ jobs:
         with:
           repository: vyaspurva20/ci-bot-agent
           ref: v1
+          path: ci-bot-agent   # 🔥 THIS IS THE FIX
 
-      - name: Debug workspace
+      - name: Debug filesystem
         run: |
           pwd
           ls -la
-          ls -la agent
+          ls -la ci-bot-agent
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,13 +43,13 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
-        working-directory: .
+        working-directory: ci-bot-agent   # 🔥 AND THIS
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run CI Smart Agent
-        working-directory: .
+        working-directory: ci-bot-agent   # 🔥 AND THIS
         env:
           TARGET_REPO: ${{ inputs.repo }}
           CI_LOGS: ${{ inputs.logs }}
