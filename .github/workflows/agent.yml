@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Debug agent path
+      - name: Show agent directory (debug)
         run: |
           echo "ACTION PATH = ${{ github.action_path }}"
           ls -la ${{ github.action_path }}
