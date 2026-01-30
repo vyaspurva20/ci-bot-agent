@@ -206,6 +206,11 @@ def main():
         if missing_module in SAFE_PYPI_PACKAGES:
             add_dependency(missing_module)
             fix_type = "dependency"
+        
+        if "command not found" in logs:
+        print("Detected invalid shell command")
+        print("Suggested fix: remove or replace the invalid command")
+
         else:
             remove_import(missing_module)
             fix_type = "code"
